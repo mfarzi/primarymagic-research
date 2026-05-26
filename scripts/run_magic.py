@@ -955,6 +955,18 @@ def parse_args():
         help="Root directory of preprocessed data (default: data/custom/processed/magic).",
     )
     parser.add_argument(
+        "--checkpoints-root",
+        type=str,
+        default="checkpoints",
+        help="Root directory where checkpoints/<name>/ lives. Default: checkpoints (cwd-relative).",
+    )
+    parser.add_argument(
+        "--results-root",
+        type=str,
+        default="results",
+        help="Root directory where results/<name>/ + log files go. Default: results (cwd-relative).",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -1001,8 +1013,8 @@ def main():
     args = parse_args()
 
     # Derive output paths from experiment name; override data root if given
-    CHECKPOINT_BASE = Path("checkpoints") / args.name
-    RESULTS_BASE = Path("results") / args.name
+    CHECKPOINT_BASE = Path(args.checkpoints_root) / args.name
+    RESULTS_BASE = Path(args.results_root) / args.name
     LOG_DIR = RESULTS_BASE
     DATA_ROOT = args.data_root
     SEED = args.seed
