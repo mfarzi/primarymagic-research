@@ -14,6 +14,7 @@ dependencies = [
     "pandas>=2.0",
     "jupyter>=1.0",
     "ipykernel>=6.0",
+    "xlsxwriter>=3.0",
     "tomli>=2.0; python_version < '3.11'",
     # Workaround: orplib pulls in pyqt5 (GUI), and newer pyqt5-qt5 lacks
     # Windows wheels. Pin to a version that does have them on Windows.
