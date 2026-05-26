@@ -1,0 +1,10 @@
+# primarymagic-research path config — TEMPLATE.
+# Copy this file to config/paths.toml (gitignored) and edit for your machine.
+# Env vars override these values if set:
+#   PRIMARYMAGIC_DATA_ROOT
+#   PRIMARYMAGIC_CHECKPOINTS_ROOT
+#   PRIMARYMAGIC_RESULTS_ROOT
+
+data_root        = "C:/Users/mfarzi/data/spectra"
+checkpoints_root = "C:/Users/mfarzi/data/checkpoints"
+results_root     = "C:/Users/mfarzi/data/results"

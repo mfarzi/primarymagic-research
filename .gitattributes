@@ -1,0 +1,11 @@
+* text=auto eol=lf
+*.ipynb text
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.pptx binary
+*.pt binary
+*.npz binary
+*.sh text eol=lf
+*.bat text eol=crlf
