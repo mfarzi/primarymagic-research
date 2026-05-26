@@ -1,0 +1,6 @@
+length,sequence,rep,lag_samples,wl_step_cm1,lag_cm1,rep_path
+4-letter,FARD,rep1,-8,1.730201,-13.8416,4-letter/FARD/rep1
+4-letter,FARD,rep2,-8,1.730197,-13.8416,4-letter/FARD/rep2
+5-letter,FARDG,rep1,-8,1.730201,-13.8416,5-letter/FARDG/rep1
+5-letter,FARDG,rep2,-8,1.730197,-13.8416,5-letter/FARDG/rep2
+5-letter,FARDS,rep1,-8,1.730201,-13.8416,5-letter/FARDS/rep1
