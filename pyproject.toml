@@ -18,6 +18,11 @@ dependencies = [
     # Workaround: orplib pulls in pyqt5 (GUI), and newer pyqt5-qt5 lacks
     # Windows wheels. Pin to a version that does have them on Windows.
     "pyqt5-qt5<5.15.3 ; sys_platform == 'win32'",
+    # Pin torch to the exact CUDA build used in the historical May-10
+    # training runs (matches conda env `spectra` at C:/Users/mfarzi/miniconda3/envs/spectra).
+    # Required to reproduce GPU-trained model weights bit-exactly. Sourced
+    # from PyTorch's CUDA 12.8 wheel index (see [tool.uv.sources] below).
+    "torch==2.9.1",
 ]
 
 [dependency-groups]
@@ -28,3 +33,14 @@ dev = ["pytest>=7.0.0", "ruff>=0.4"]
 # environment from this file but never tries to build/install the repo as
 # a package.
 package = false
+
+[tool.uv.sources]
+# Pull torch (and its companion bundles) from PyTorch's CUDA 12.8 index
+# instead of PyPI's default (which on Windows ships CPU-only wheels).
+# This is needed for training/eval to actually use the GPU.
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
