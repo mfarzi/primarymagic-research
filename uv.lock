@@ -2405,8 +2405,8 @@ wheels = [
 
 [[package]]
 name = "primarymagic"
-version = "0.1.2"
-source = { git = "ssh://git@github.com/mfarzi/primarymagic?rev=v0.1.2#535118601a11946deda0635ba29207b753c4e830" }
+version = "0.1.3"
+source = { git = "ssh://git@github.com/mfarzi/primarymagic?rev=v0.1.3#954ed11d35e408167fdba1eeb91dd8aca99524ca" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2452,7 +2452,7 @@ requires-dist = [
     { name = "jupyter", specifier = ">=1.0" },
     { name = "orplib", specifier = ">=1.0.10" },
     { name = "pandas", specifier = ">=2.0" },
-    { name = "primarymagic", extras = ["ml"], git = "ssh://git@github.com/mfarzi/primarymagic?rev=v0.1.2" },
+    { name = "primarymagic", extras = ["ml"], git = "ssh://git@github.com/mfarzi/primarymagic?rev=v0.1.3" },
     { name = "pyqt5-qt5", marker = "sys_platform == 'win32'", specifier = "<5.15.3" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
 ]

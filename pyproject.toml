@@ -9,7 +9,7 @@ authors = [
     {name = "mfarzi"}
 ]
 dependencies = [
-    "primarymagic[ml] @ git+ssh://git@github.com/mfarzi/primarymagic@v0.1.2",
+    "primarymagic[ml] @ git+ssh://git@github.com/mfarzi/primarymagic@v0.1.3",
     "orplib>=1.0.10",
     "pandas>=2.0",
     "jupyter>=1.0",
