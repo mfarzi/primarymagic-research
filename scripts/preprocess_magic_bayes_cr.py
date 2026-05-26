@@ -42,6 +42,7 @@ from primarymagic import (
     export_to_npz,
 )
 from primarymagic.preprocessing.snr import calculate_snr_from_stages
+from primarymagic.preprocessing.contamination import detect_cr_contamination
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,25 +101,45 @@ def sample_indices(mask, n, rng):
 
 
 def write_quality_mask_bayes(save_dir, snr, signal, noise_std, pass_mask,
-                             snr_threshold):
+                             snr_threshold, snr_pass=None,
+                             cr_contaminated=None, cr_fwhm_min=None,
+                             cr_energy_ratio_max=None):
     """Write the per-spectrum quality-mask sidecar to ``save_dir / 'mask.npz'``.
 
-    See docs/superpowers/specs/2026-05-10-preprocess-magic-bayes-mask-sidecar-design.md
-    for the file contract.
+    v2 schema additions: ``snr_pass``, ``cr_contaminated``, ``cr_fwhm_min``,
+    ``cr_energy_ratio_max``. Default `snr_pass = pass_mask` and
+    `cr_contaminated = zeros` when v2 args are omitted (back-compat).
+
+    See docs/superpowers/specs/2026-05-12-robust-cosmic-ray-removal-design.md
+    for the v2 schema.
 
     Args:
         save_dir: Directory in which to write ``mask.npz``.
         snr: Per-spectrum SNR values, length N.
         signal: Per-spectrum max(stage3) values, length N.
         noise_std: Per-spectrum MAD-sigma noise estimate, length N.
-        pass_mask: Boolean array-like of length N — pass/fail per spectrum.
-        snr_threshold: SNR threshold used for the pass decision.
+        pass_mask: Final pass decision per spectrum (snr_pass & ~cr_contaminated).
+        snr_threshold: SNR threshold used.
+        snr_pass: Raw SNR-only decision. Defaults to `pass_mask`.
+        cr_contaminated: Contamination filter output. Defaults to all-False.
+        cr_fwhm_min: Threshold used by contamination Test 1. Defaults to 0.0.
+        cr_energy_ratio_max: Threshold used by contamination Test 2. Defaults to 1.0.
     """
     save_dir = Path(save_dir)
     passed = np.asarray(pass_mask, dtype=bool)
     n = len(passed)
     clean_index = np.full(n, -1, dtype=np.int32)
     clean_index[passed] = np.arange(int(passed.sum()), dtype=np.int32)
+
+    if snr_pass is None:
+        snr_pass = passed
+    if cr_contaminated is None:
+        cr_contaminated = np.zeros(n, dtype=bool)
+    if cr_fwhm_min is None:
+        cr_fwhm_min = 0.0
+    if cr_energy_ratio_max is None:
+        cr_energy_ratio_max = 1.0
+
     np.savez_compressed(
         save_dir / 'mask.npz',
         raw_index=np.arange(n, dtype=np.int32),
@@ -128,6 +149,10 @@ def write_quality_mask_bayes(save_dir, snr, signal, noise_std, pass_mask,
         signal=np.asarray(signal, dtype=np.float64),
         noise_std=np.asarray(noise_std, dtype=np.float64),
         snr_threshold=np.float64(snr_threshold),
+        snr_pass=np.asarray(snr_pass, dtype=bool),
+        cr_contaminated=np.asarray(cr_contaminated, dtype=bool),
+        cr_fwhm_min=np.float64(cr_fwhm_min),
+        cr_energy_ratio_max=np.float64(cr_energy_ratio_max),
     )
 
 
@@ -136,11 +161,11 @@ def write_quality_mask_bayes(save_dir, snr, signal, noise_std, pass_mask,
 # ---------------------------------------------------------------------------
 
 def run_stage1(collection):
-    """remove_edge_spikes(edge_n=10, factor=5.0) → remove_cosmic_rays(width=3, std_factor=5)"""
+    """remove_edge_spikes(edge_n=10, factor=5.0) → remove_cosmic_rays_robust(k=4.5, max_iter=5, width_max=8)"""
     return (
         PreprocessingPipeline(collection)
         .remove_edge_spikes(edge_n=10, factor=5.0)
-        .remove_cosmic_rays(width=3, std_factor=5)
+        .remove_cosmic_rays_robust(k=4.5, max_iter=5, width_max=8)
         .result()
     )
 
@@ -164,22 +189,28 @@ def run_stage3(stage2, noise_percentile=None):
     return clip_to_zero(result, noise_percentile=noise_percentile)
 
 
-def run_stage4_snr_filter(stage1, stage2, stage3, snr_threshold):
-    """Stage 4: SNR threshold filter.
+def run_stage4_snr_filter(stage1, stage2, stage3, snr_threshold,
+                          fwhm_min, energy_ratio_max):
+    """Stage 4: SNR + cosmic-ray contamination filter.
 
-    Compute per-spectrum SNR via calculate_snr_from_stages (noise from
-    stage1-stage2 residual, signal from max(stage3)). Spectra with
-    SNR > threshold pass; the rest fail.
+    Compute per-spectrum SNR via calculate_snr_from_stages, then AND with the
+    contamination filter (FWHM + single-pixel-energy two-test OR).
 
-    Returns: (snr, signal, noise_std, pass_mask, fail_mask)
+    Returns:
+        snr, signal, noise_std, pass_mask, fail_mask, snr_pass, cr_contaminated
     """
     s1_mat = stage1.to_intensity_matrix()
     s2_mat = stage2.to_intensity_matrix()
     s3_mat = stage3.to_intensity_matrix()
     snr, signal, noise_std = calculate_snr_from_stages(s1_mat, s2_mat, s3_mat)
-    pass_mask = snr > snr_threshold
+
+    snr_pass = snr > snr_threshold
+    cr_contaminated = detect_cr_contamination(
+        stage3, fwhm_min=fwhm_min, energy_ratio_max=energy_ratio_max
+    )
+    pass_mask = snr_pass & ~cr_contaminated
     fail_mask = ~pass_mask
-    return snr, signal, noise_std, pass_mask, fail_mask
+    return snr, signal, noise_std, pass_mask, fail_mask, snr_pass, cr_contaminated
 
 
 def run_stage6(stage3, pass_mask):
@@ -480,7 +511,8 @@ def save_group(collection, mask, wavelengths, filepath):
 # ---------------------------------------------------------------------------
 
 def process_rep(raw_folder, save_dir, label, stage,
-                snr_threshold, n_samples, noise_percentile=None):
+                snr_threshold, fwhm_min, energy_ratio_max,
+                n_samples, noise_percentile=None):
     """Process a single rep through all stages."""
     raw_folder = Path(raw_folder)
     save_dir = Path(save_dir)
@@ -520,14 +552,21 @@ def process_rep(raw_folder, save_dir, label, stage,
     export_to_npz(stage3, save_dir / 'stage3_baseline_removed.npz')
     print(f"  [{label}] Stage 3 done -> stage3_baseline_removed.npz")
 
-    # --- Stage 4: SNR threshold filter ---
-    print(f"  [{label}] Stage 4: SNR computation + threshold filter (snr_threshold={snr_threshold}) ...")
-    snr, signal, noise_std, pass_mask, fail_mask = run_stage4_snr_filter(
-        stage1, stage2, stage3, snr_threshold)
+    # --- Stage 4: SNR threshold + CR contamination filter ---
+    print(f"  [{label}] Stage 4: SNR + CR contamination filter "
+          f"(snr_threshold={snr_threshold}, fwhm_min={fwhm_min}, "
+          f"energy_ratio_max={energy_ratio_max}) ...")
+    (snr, signal, noise_std, pass_mask, fail_mask,
+     snr_pass, cr_contaminated) = run_stage4_snr_filter(
+        stage1, stage2, stage3, snr_threshold, fwhm_min, energy_ratio_max,
+    )
 
     n_pass = int(pass_mask.sum())
     n_fail = int(fail_mask.sum())
-    print(f"  [{label}] SNR filter: pass={n_pass}, fail={n_fail}")
+    n_snr_fail = int((~snr_pass).sum())
+    n_cr_fail = int(cr_contaminated.sum())
+    print(f"  [{label}] Filter results: pass={n_pass}, fail={n_fail} "
+          f"(snr_fail={n_snr_fail}, cr_contaminated={n_cr_fail})")
     print(f"  [{label}] SNR stats: min={snr.min():.2f}, "
           f"median={np.median(snr):.2f}, max={snr.max():.2f}")
 
@@ -535,7 +574,13 @@ def process_rep(raw_folder, save_dir, label, stage,
     save_group(stage3, fail_mask, wavelengths, save_dir / 'stage4_rejected.npz')
     print(f"  [{label}] Saved stage4 group npz files")
 
-    write_quality_mask_bayes(save_dir, snr, signal, noise_std, pass_mask, snr_threshold)
+    write_quality_mask_bayes(
+        save_dir, snr, signal, noise_std, pass_mask, snr_threshold,
+        snr_pass=snr_pass,
+        cr_contaminated=cr_contaminated,
+        cr_fwhm_min=fwhm_min,
+        cr_energy_ratio_max=energy_ratio_max,
+    )
     print(f"  [{label}] Saved quality mask -> mask.npz")
 
     export_to_npz(raw, save_dir / 'raw_all.npz')
@@ -623,10 +668,14 @@ def process_rep(raw_folder, save_dir, label, stage,
         'thresholds': {
             'snr_threshold': snr_threshold,
             'noise_percentile': noise_percentile,
+            'cr_fwhm_min': fwhm_min,
+            'cr_energy_ratio_max': energy_ratio_max,
         },
         'stage4': {
             'n_passed': n_pass,
             'n_rejected': n_fail,
+            'n_snr_fail': n_snr_fail,
+            'n_cr_contaminated': n_cr_fail,
             'snr_min': float(snr.min()),
             'snr_median': float(np.median(snr)),
             'snr_max': float(snr.max()),
@@ -657,7 +706,7 @@ def main():
                         default=Path('data/custom/raw'),
                         help='Root directory containing raw rep directories')
     parser.add_argument('--output-root', type=Path,
-                        default=Path('data/custom/processed/magic_bayes'),
+                        default=Path('data/custom/processed/magic_bayes_cr'),
                         help='Root directory for processed output')
     parser.add_argument('--stage', type=int, default=6, choices=[1, 2, 3, 4, 5, 6],
                         help='Maximum stage to run (stages 1-4 always execute; '
@@ -673,6 +722,13 @@ def main():
     parser.add_argument('--noise-percentile', type=float, default=None,
                         help='Clip floor as per-spectrum percentile (e.g. 5). '
                              'Default: None (clip to zero)')
+    parser.add_argument('--cr-fwhm-min', type=float, default=3.0,
+                        help='Minimum FWHM (pixels) of the dominant stage-3 peak '
+                             'below which a spectrum is flagged as CR-contaminated. '
+                             'Default: 3.0')
+    parser.add_argument('--cr-energy-ratio-max', type=float, default=0.15,
+                        help='Maximum single-pixel/total-energy ratio at the '
+                             'dominant stage-3 peak. Default: 0.15')
     parser.add_argument('--n-samples', type=int, default=5,
                         help='Number of sample spectra per group in diagnostic plots (default: 5)')
     parser.add_argument('--overwrite-existing', action='store_true',
@@ -689,6 +745,8 @@ def main():
     print(f"Stage:         {args.stage}")
     print(f"SNR threshold: {args.snr_threshold}")
     print(f"Noise pctl:    {args.noise_percentile if args.noise_percentile is not None else 'None (clip to zero)'}")
+    print(f"CR fwhm min:   {args.cr_fwhm_min}")
+    print(f"CR energy max: {args.cr_energy_ratio_max}")
     print(f"Length:        {args.length or 'all'}")
     print(f"Sequence:      {args.sequence or 'all'}")
     print(f"Rep:           {args.rep or 'all'}")
@@ -758,6 +816,8 @@ def main():
                 label=label,
                 stage=args.stage,
                 snr_threshold=args.snr_threshold,
+                fwhm_min=args.cr_fwhm_min,
+                energy_ratio_max=args.cr_energy_ratio_max,
                 n_samples=args.n_samples,
                 noise_percentile=args.noise_percentile,
             )
